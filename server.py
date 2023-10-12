@@ -1,61 +1,115 @@
 import socket
-import re
+import threading
+from collections import namedtuple
+from dataclasses import dataclass
+from typing import List
+
 import matplotlib.pyplot as plt
-from collections import deque
+
+point_data = namedtuple("point_data", ("x", "y"))
 
 
-class DataServer:
+@dataclass
+class PlotData:
+    values: List[point_data]
+
+
+class ServerPlot:
+    """object for plotting"""
+
+    plot_data_buffer = None
+
+    def __init__(self):
+        # this will store data for each of the client
+        self.client_plots = {}
+
+        # start plotting thread
+        self.lock = threading.Lock()
+        self.start_plotting_thread()
+
+    def start_plotting_thread(self):
+        plot_thread = threading.Thread(target=self.update_plot_thread)
+        plot_thread.daemon = True
+        plot_thread.start()
+
+    def add_client(self, client_address):
+        self.client_plots[client_address] = PlotData([])
+
+    def process_data(self, client_address, data):
+        try:
+            y_value = float(data.decode("utf-8"))
+            with self.lock:
+                client_plot_data = self.client_plots[client_address]
+                x_value = len(client_plot_data.values) if client_plot_data.values is not None else 0
+                point = point_data(x=x_value, y=y_value)
+                client_plot_data.values.append(point)
+
+                self.plot_data_buffer = self.client_plots.copy()
+        except ValueError:
+            print(f"Invalid data received from {client_address}")
+
+    def update_plot_thread(self):
+        while True:
+            if self.plot_data_buffer:
+                # Clear the current plot
+                plt.clf()
+                with self.lock:
+                    # iterate over your clients and it's data
+                    for client_address, data in self.plot_data_buffer.items():
+                        x_values = [item.x for item in data.values]
+                        y_values = [item.y for item in data.values]
+                        plt.plot(x_values, y_values, label=f"Client {client_address}")
+
+                plt.xlabel("X")
+                plt.ylabel("Y")
+                plt.legend()
+                plt.draw()
+                self.plot_data_buffer = None
+
+            # pause for graph to be updated
+            plt.pause(0.1)
+
+
+class MultiPlotServer:
     def __init__(self, host, port):
         self.host = host
         self.port = port
-        self.data_history = deque(maxlen=50)
-        self.pattern = r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}): (\d+)"
-        self.setup_plot()
+        self.server_plot = ServerPlot()
 
-    def setup_plot(self):
-        plt.ion()
-        self.fig, self.ax = plt.subplots()
-        self.line, = self.ax.plot([], [])
-        self.ax.set_xlabel("Time")
-        self.ax.set_ylabel("Value")
-        self.ax.set_title("Real-Time Data Plot")
+    def start_server(self):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server_socket:
+            server_socket.bind((self.host, self.port))
+            server_socket.listen()
 
-    def handle_client(self, client_socket):
-        addr = client_socket.getpeername()
-        print(f"Accepted connection from {addr}")
-        while True:
-            data = client_socket.recv(1024)
-            if not data:
-                break
-            data = data.decode()
-            match = re.search(self.pattern, data)
-            if match:
-                timestamp, value = match.groups()
-                self.data_history.append((timestamp, int(value)))
-                self.update_plot()
+            print(f"Server listening on {self.host}:{self.port}")
 
-        print(f"Connection from {addr} closed.")
-        client_socket.close()
+            while True:
+                client_socket, client_address = server_socket.accept()
+                print(f"New client: {client_address}")
 
-    def update_plot(self):
-        timestamps, values = zip(*self.data_history)
-        self.line.set_data(range(len(self.data_history)), values)
-        self.ax.relim()
-        self.ax.autoscale_view()
-        self.fig.canvas.flush_events()
+                # Create a client plot
+                self.server_plot.add_client(client_address)
+                client_thread = threading.Thread(
+                    target=self.handle_client, args=(client_socket, client_address)
+                )
+                client_thread.start()
 
-    def start(self):
-        server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        server_socket.bind((self.host, self.port))
-        server_socket.listen(1)
+    def handle_client(self, client_socket, client_address):
+        try:
+            while True:
+                data = client_socket.recv(1024)
+                if not data:
+                    break
+                self.server_plot.process_data(client_address, data)
 
-        print(f"Server listening on {self.host}:{self.port}")
-
-        while True:
-            client_socket, client_address = server_socket.accept()
-            self.handle_client(client_socket)
+        except Exception as e:
+            print(f"Error: {e}")
+        finally:
+            client_socket.close()
 
 
 if __name__ == "__main__":
-    server = DataServer("127.0.0.1", 12345)
-    server.start()
+    host = "127.0.0.1"
+    port = 12345
+    multi_plot_server = MultiPlotServer(host, port)
+    multi_plot_server.start_server()

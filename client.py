@@ -1,33 +1,38 @@
 import socket
-import time
 import random
+import time
 
 
-class DataClient:
+class PlotClient:
     def __init__(self, server_host, server_port):
         self.server_host = server_host
         self.server_port = server_port
         self.client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
-    def connect(self):
+    def connect_to_server(self):
         self.client_socket.connect((self.server_host, self.server_port))
-        print(f"Connected to {self.server_host}:{self.server_port}")
+        print("Connected to the server")
 
     def send_data(self):
-        try:
-            while True:
-                data = str(random.randint(0, 100))
-                timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
-                data_with_timestamp = f"{timestamp}: {data}"
-                self.client_socket.send(data_with_timestamp.encode())
-                time.sleep(1)
-        except KeyboardInterrupt:
-            print("Data sender stopped.")
-        finally:
-            self.client_socket.close()
+        while True:
+            data = str(random.uniform(0, 10)).encode("utf-8")
+            self.client_socket.sendall(data)
+            print(f"Sent data to the server: {data.decode('utf-8')}")
+            time.sleep(1)  # Adjust the interval as needed
+
+    def close_connection(self):
+        self.client_socket.close()
 
 
 if __name__ == "__main__":
-    client = DataClient("127.0.0.1", 12345)
-    client.connect()
-    client.send_data()
+    server_host = "127.0.0.1"
+    server_port = 12345
+
+    plot_client = PlotClient(server_host, server_port)
+    plot_client.connect_to_server()
+    try:
+        plot_client.send_data()
+    except KeyboardInterrupt:
+        print("Client terminated by user")
+    finally:
+        plot_client.close_connection()
